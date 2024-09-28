@@ -53,7 +53,7 @@ formats = {
 
 def allowed_transcodes(torrent):
     """Some torrent types have transcoding restrictions."""
-    preemphasis = re.search(r"""pre[- ]?emphasi(s(ed)?|zed)""", torrent['remasterTitle'], flags=re.IGNORECASE)
+    preemphasis = re.search(r"""pre[- ]?emphasi(s(ed)?|zed)""", torrent['remasterTitle'] or "", flags=re.IGNORECASE)
     if preemphasis:
         return []
     else:
