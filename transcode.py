@@ -333,7 +333,10 @@ def get_transcode_dir(flac_dir, output_dir, output_format, resample):
                 transcode_dir = transcode_dir.replace('24', '16')
             else:
                 transcode_dir += " [16-48]"
-  
+
+    if re.search(r'\b2016\b', transcode_dir) and re.search(r'\b2024\b', flac_dir):
+        transcode_dir = re.sub(r'\b2016\b', '2024', transcode_dir)
+        
     transcode_dir = input(f"Transcode directory? [ {transcode_dir} ] : ").strip() or transcode_dir
     return os.path.join(output_dir, transcode_dir)
 
