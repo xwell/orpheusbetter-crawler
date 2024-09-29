@@ -195,7 +195,7 @@ class WhatAPI:
                     for torrentid, groupid in pattern.findall(content):
                         if skip is None or torrentid not in skip:
                             yield int(groupid), int(torrentid)
-                    done = 'Next &gt;' not in content
+                    done = 'Next &rsaquo;' not in content
                     page += 1
 
         if mode == 'uploaded' or mode == 'both' or mode == 'all':
@@ -208,12 +208,12 @@ class WhatAPI:
                     for torrentid, groupid in pattern.findall(content):
                         if skip is None or torrentid not in skip:
                             yield int(groupid), int(torrentid)
-                    done = 'Next &gt;' not in content
+                    done = 'Next &rsaquo;' not in content
                     page += 1
 
         if mode == 'seeding' or mode == 'all':
             url = '{0}/better.php?method=transcode&filter=seeding'.format(self.endpoint)
-            pattern = re.compile('torrents.php\?groupId=(\d+)&torrentid=(\d+)#\d+')
+            pattern = re.compile('torrents.php\?groupId=(\d+)&torrentid=(\d+)(#\d+).*?')
             content = self.get_html(url)
             for groupid, torrentid in pattern.findall(content):
                 if skip is None or torrentid not in skip:
