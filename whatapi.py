@@ -81,7 +81,7 @@ class WhatAPI:
         self.passkey = None
         self.userid = None
         self.last_request = time.time()
-        self.rate_limit = 2.0 # seconds between requests
+        self.rate_limit = 10.0 # seconds between requests
         self._login()
 
     def _login(self):
