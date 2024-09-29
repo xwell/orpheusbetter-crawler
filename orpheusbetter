@@ -230,7 +230,7 @@ def main():
                     whatapi.unescape(group['group']['name']), group['group']['year']))
                 if not os.path.exists(flac_dir):
                     os.makedirs(flac_dir)
-                shutil.copy(flac_file, flac_dir)
+                shutil.copyfile(filename, transcode_dir + "/" + os.path.basename(filename))
                 break
 
             if not os.path.exists(flac_file):

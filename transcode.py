@@ -333,6 +333,7 @@ def get_transcode_dir(flac_dir, output_dir, output_format, resample):
                 transcode_dir = transcode_dir.replace('24', '16')
             else:
                 transcode_dir += " [16-48]"
+  
     transcode_dir = input(f"Transcode directory? [ {transcode_dir} ] : ").strip() or transcode_dir
     return os.path.join(output_dir, transcode_dir)
 
@@ -414,7 +415,7 @@ def transcode_release(flac_dir, output_dir, output_format, max_threads=None):
             new_dir = os.path.dirname(filename).replace(flac_dir, transcode_dir)
             if not os.path.exists(new_dir):
                 os.makedirs(new_dir)
-            shutil.copy(filename, new_dir)
+            shutil.copyfile(filename, transcode_dir + "/" + os.path.basename(filename))
 
         return transcode_dir
 
