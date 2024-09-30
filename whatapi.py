@@ -213,7 +213,8 @@ class WhatAPI:
 
         if mode == 'seeding' or mode == 'all':
             url = '{0}/better.php?method=transcode&filter=seeding'.format(self.endpoint)
-            pattern = re.compile('torrents.php\?groupId=(\d+)&torrentid=(\d+)(#\d+).*?')
+            #pattern = re.compile('torrents.php\?groupId=(\d+)&torrentid=(\d+)(#\d+).*?')
+            pattern = re.compile('torrents\.php\?id=(\d+)&amp;torrentid=(\d+)#\w+\d+')
             content = self.get_html(url)
             for groupid, torrentid in pattern.findall(content):
                 if skip is None or torrentid not in skip:
