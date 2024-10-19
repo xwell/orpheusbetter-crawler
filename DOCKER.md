@@ -9,13 +9,14 @@ mkdir config data torrent
 ## Build the Image:
 
 ```text
+wget https://raw.githubusercontent.com/starkayc/orpheusbetter-crawler/refs/heads/master/Dockerfile
 docker build -t orpheusbetter .
 ```
 
 ## Run the Container:
 
 ```text
-docker run -it -v $PWD/config:/config/.orpheusbetter -v $PWD/data:/data -v $PWD/torrent:/torrent orpheusbetter -c "/app/orpheusbetter --threads 4"
+docker run -it -v $PWD/config:/config/.orpheusbetter -v $PWD/data:/data -v $PWD/torrent:/torrent starkayc/orpheusbetter -c "/app/orpheusbetter --threads 4"
 ```
 
 ## Additioal Arugments for the Container:
@@ -60,7 +61,7 @@ optional arguments:
 Add ```--totp codehere``` in the docker run command option.
 
 ```text
-docker run -it -v $PWD/config:/config/.orpheusbetter -v $PWD/data:/data -v $PWD/torrent:/torrent orpheusbetter -c "/app/orpheusbetter --threads 4 --totp codehere"
+docker run -it -v $PWD/config:/config/.orpheusbetter -v $PWD/data:/data -v $PWD/torrent:/torrent starkayc/orpheusbetter -c "/app/orpheusbetter --threads 4 --totp codehere"
 ```
 
 #### I just want to test the app, how do I do it without uploading?
@@ -68,7 +69,7 @@ docker run -it -v $PWD/config:/config/.orpheusbetter -v $PWD/data:/data -v $PWD/
 Add ```--no-upload``` in the docker run command option.
 
 ```text
-docker run -it -v $PWD/config:/config/.orpheusbetter -v $PWD/data:/data -v $PWD/torrent:/torrent orpheusbetter -c "/app/orpheusbetter --threads 4 --no-upload"
+docker run -it -v $PWD/config:/config/.orpheusbetter -v $PWD/data:/data -v $PWD/torrent:/torrent starkayc/orpheusbetter -c "/app/orpheusbetter --threads 4 --no-upload"
 ```
 #### OrpheusBetter isn't showing me any results after running it various times.
 
