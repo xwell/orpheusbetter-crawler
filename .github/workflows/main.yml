@@ -2,12 +2,13 @@ name: Orpheusbetter Docker Image
 
 on:
   push:
-    workflow_dispatch:
     branches:
       - master
     paths:
       - ".github/workflows/main.yml"
       - "Dockerfile"
+
+    workflow_dispatch:
 
 jobs:
   Orpheusbetter:
