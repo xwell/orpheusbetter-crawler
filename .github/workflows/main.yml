@@ -4,7 +4,7 @@ on:
   push:
     workflow_dispatch:
     branches:
-      - main
+      - master
     paths:
       - ".github/workflows/main.yml"
       - "Dockerfile"
@@ -16,7 +16,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        ref: 'main'
+        ref: 'master'
     - name: Build the Docker image
       env:
         HUB_NAME: ${{ secrets.DOCKER_NAME }}
