@@ -26,4 +26,4 @@ jobs:
         docker login -u $HUB_NAME -p $HUB_KEY
         docker build . --pull --no-cache --tag orpheusbetter:latest
 
-        docker push starkayc/orpheusbetter:latest
+        docker push orpheusbetter:latest
