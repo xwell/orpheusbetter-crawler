@@ -1,0 +1,11 @@
+version: "3.3"
+services:
+  orpheusbetter:
+    image: starkayc/orpheusbetter
+    command: -c "/app/orpheusbetter --threads 4" # add --totp codehere after --threads 4 if using 2FA.
+    stdin_open: true
+    tty: true
+    volumes:
+      - $PWD/config:/config/.orpheusbetter
+      - $PWD/data:/data
+      - $PWD/torrent:/torrent
