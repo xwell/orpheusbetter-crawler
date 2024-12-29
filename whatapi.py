@@ -99,21 +99,35 @@ class WhatAPI:
         params = {'action': action}
         params.update(kwargs)
 
-        if data:
-            data['auth'] = self.authkey
-            r = self.session.post(ajaxpage, params=params, data=data, files=files)
-        else:
-            params['auth'] = self.authkey
-            r = self.session.get(ajaxpage, params=params, allow_redirects=False)
+        max_retries = 3
+        timeout = 30
+        retry_delay = 5
+        
+        for attempt in range(max_retries):
+            try:
+                if data:
+                    data['auth'] = self.authkey
+                    r = self.session.post(ajaxpage, params=params, data=data, 
+                                       files=files, timeout=timeout)
+                else:
+                    params['auth'] = self.authkey
+                    r = self.session.get(ajaxpage, params=params, 
+                                       allow_redirects=False, timeout=timeout)
 
-        self.last_request = time.time()
-        try:
-            parsed = json.loads(r.content)
-            if parsed['status'] != 'success':
-                raise RequestException(parsed['error'])
-            return parsed['response']
-        except ValueError:
-            raise RequestException
+                parsed = json.loads(r.content)
+                if parsed['status'] != 'success':
+                    raise RequestException(parsed['error'])
+                    
+                self.last_request = time.time()
+                return parsed['response']
+                
+            except (requests.Timeout, requests.ConnectionError) as e:
+                if attempt == max_retries - 1:  # last retry
+                    raise RequestException(f"Network request failed: {str(e)}")
+                time.sleep(retry_delay)
+                continue
+            except ValueError as e:
+                raise RequestException(f"JSON parse error: {str(e)}")
 
     def request_html(self, action, **kwargs):
         while time.time() - self.last_request < self.rate_limit:
@@ -203,7 +217,7 @@ class WhatAPI:
         if mode == 'seeding' or mode == 'all':
             url = '{0}/better.php?method=transcode&filter=seeding'.format(self.endpoint)
             #pattern = re.compile('torrents.php\?groupId=(\d+)&torrentid=(\d+)(#\d+).*?')
-            pattern = re.compile('torrents\.php\?id=(\d+)&amp;torrentid=(\d+)#\w+\d+')
+            pattern = re.compile(r'torrents\.php\?id=(\d+)&amp;torrentid=(\d+)#\w+\d+')
             content = self.get_html(url)
             for groupid, torrentid in pattern.findall(content):
                 if skip is None or torrentid not in skip:
