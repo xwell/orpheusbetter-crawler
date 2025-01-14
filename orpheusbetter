@@ -10,6 +10,7 @@ import traceback
 from packaging.version import Version
 from urllib.parse import urlparse, parse_qsl
 from multiprocessing import cpu_count
+import time
 
 import tagging
 import transcode
@@ -73,6 +74,16 @@ def main():
     parser.add_argument('-S', '--skip', action='store_true', help="treats a torrent as already processed")
     parser.add_argument('-t', '--totp', help="time based one time password for 2FA", default=None)
     parser.add_argument('-o', '--source', help="the value to put in the source flag in created torrents")
+    parser.add_argument('-ff', '--folder-format', metavar="PATTERN",
+                        help="""
+                        pattern for formatting folder names.
+                        e.g. '%ARTISTNAME% - %ALBUMTITLE% (%YEAR%) {%LABEL%, %CATALOGUENUMBER%} [%MEDIATYPE% %FORMAT%]'
+                        available variables: %ARTISTNAME%, %ALBUMTITLE%, %YEAR%, %LABEL%, %CATALOGUENUMBER%, %FORMAT%, %RELEASETYPE%, %MEDIATYPE%
+                        note: %ALBUMTITLE% will contain the remaster title(aka. version title) if it exists, otherwise the original title.
+                        """)
+    parser.add_argument('--daemon', action='store_true', help='Run in daemon mode for continuous monitoring')
+    parser.add_argument('--interval', type=int, default=3600, 
+                       help='Check interval in seconds for daemon mode (default: 3600)')
 
     args = parser.parse_args()
 
@@ -96,6 +107,7 @@ def main():
         config.set('orpheus', 'mode', 'both')
         config.set('orpheus', 'api', 'https://orpheus.network')
         config.set('orpheus', 'source', 'OPS')
+        config.set('orpheus', 'folder_format', '%ARTISTNAME% - %ALBUMTITLE% (%YEAR%) {%LABEL%, %CATALOGUENUMBER%} [%MEDIATYPE% %FORMAT%]')
         config.write(open(args.config, 'w'))
         print("Please edit the configuration file: {0}".format(args.config))
         sys.exit(2)
@@ -152,6 +164,10 @@ def main():
                 updated = True
                 config.set('orpheus', 'source', 'OPS')
 
+            if Version(version) < Version('2.1.0'):
+                updated = True
+                config.set('orpheus', 'folder_format', '%ARTISTNAME% - %ALBUMTITLE% (%YEAR%) {%LABEL%, %CATALOGUENUMBER%} [%MEDIATYPE% %FORMAT%]')
+
             if updated:
                 config.write(open(args.config, 'w'))
                 print("Migrated version {0} config".format(version))
@@ -166,162 +182,213 @@ def main():
         if config.has_option('orpheus', 'source'):
             source = config.get('orpheus', 'source')
 
+        try:
+            folder_format = config.get('orpheus', 'folder_format')
+        except configparser.NoOptionError:
+            default_folder_format = '%ARTISTNAME% - %ALBUMTITLE% (%YEAR%) {%LABEL%, %CATALOGUENUMBER%} [%MEDIATYPE% %FORMAT%]'
+            config.set('orpheus', 'folder_format', default_folder_format)
+            config.write(open(args.config, 'w'))
+            print("Added new config option: folder_format")
+
+    folder_format = args.folder_format or folder_format
+
     upload_torrent = not args.no_upload
 
     print("Logging in to Orpheus Network...")
     api = whatapi.WhatAPI(username, password, endpoint, args.totp)
 
-    try:
-        seen = pickle.load(open(args.cache, 'rb'))
-    except:
-        seen = set()
-        pickle.dump(seen, open(args.cache, 'wb'))
-
-    if args.skip:
-        skip = [int(query['torrentid']) for query in\
-                [dict(parse_qsl(urlparse(url).query)) for url in args.release_urls]]
-        for id in skip:
-            print("Skipping torrent {0}".format(str(id)))
-            seen.add(str(id))
-        pickle.dump(seen, open(args.cache, 'wb'))
-        return
-
-
-
-    print("Searching for transcode candidates...")
-    if args.release_urls:
-        if len(args.release_urls) == 1 and os.path.isfile(args.release_urls[0]):
-            print("You supplied a url list, ignoring your configuration's media types.")
-            with open(args.release_urls[0]) as f:
-                candidates = [(int(query['id']), int(query['torrentid'])) for query in\
-                        [dict(parse_qsl(urlparse(url).query)) for url in f]]
-        else:
-            print("You supplied one or more release URLs, ignoring your configuration's media types.")
-            candidates = [(int(query['id']), int(query['torrentid'])) for query in\
-                    [dict(parse_qsl(urlparse(url).query)) for url in args.release_urls]]
-    else:
-        if args.mode is None:
-            if mode == 'none':
-                print("No urls provided and scraping is disabled")
-            else:
-                candidates = api.get_candidates(mode, skip=seen, media=supported_media)
-        elif args.mode == 'none':
-            print("No urls provided and scraping is disabled")
-        else:
-            candidates = api.get_candidates(args.mode, skip=seen, media=supported_media)
-
-    for groupid, torrentid in candidates:
-        group = api.request('torrentgroup', id=groupid)
-        torrent = [t for t in group['torrents'] if t['id'] == torrentid][0]
-
-        release = "Release found: {0} ({1})".format(whatapi.unescape(group['group']['name']), group['group']['year'])
-        releaseurl = "Release URL: {0}".format(api.release_url(group, torrent))
-
-        print("")
-        print(release)
-        print(releaseurl)
-
-        if not torrent['filePath']:
-            for d in data_dir:
-                flac_file = os.path.join(d, whatapi.unescape(torrent['fileList']).split('{{{')[0])
-                if not os.path.exists(flac_file):
-                    continue
-                flac_dir = os.path.join(d, "{0} ({1}) [FLAC]".format(
-                    whatapi.unescape(group['group']['name']), group['group']['year']))
-                if not os.path.exists(flac_dir):
-                    os.makedirs(flac_dir)
-                shutil.copyfile(filename, transcode_dir + "/" + os.path.basename(filename))
-                break
-
-            if not os.path.exists(flac_file):
-                print("Path not found - skipping: {0}".format(flac_file))
-                continue
-        else:
-            for d in data_dir:
-                flac_dir = os.path.join(d, whatapi.unescape(torrent['filePath']))
-                if os.path.exists(flac_dir):
-                    break
-
-        if int(do_24_bit):
+    def process_candidates():
+        """Core logic for processing transcode candidates"""
+        try:
+            # Load cache
             try:
-                if transcode.is_24bit(flac_dir) and torrent['encoding'] != '24bit Lossless':
-                    # A lot of people are uploading FLACs from Bandcamp without realizing
-                    # that they're actually 24 bit files (usually 24/44.1). Since we know for
-                    # sure whether the files are 24 bit, we might as well correct the listing
-                    # on the site (and get an extra upload in the process).
-                    if args.no_24bit_edit:
-                        print("Release is actually 24-bit lossless, skipping.")
-                        continue
-                    if int(do_24_bit) == 1:  
-                        confirmation = input("Mark release as 24bit lossless? y/n: ")
-                        if confirmation != 'y':
-                            continue
-                    print("Marking release as 24bit lossless.")
-                    api.set_24bit(torrent)
+                seen = pickle.load(open(args.cache, 'rb'))
+            except:
+                seen = set()
+                pickle.dump(seen, open(args.cache, 'wb'))
+
+            if args.skip:
+                skip = [int(query['torrentid']) for query in\
+                        [dict(parse_qsl(urlparse(url).query)) for url in args.release_urls]]
+                for id in skip:
+                    print("Skipping torrent {0}".format(str(id)))
+                    seen.add(str(id))
+                pickle.dump(seen, open(args.cache, 'wb'))
+                return
+
+            print("Searching for transcode candidates...")
+            if args.release_urls:
+                if len(args.release_urls) == 1 and os.path.isfile(args.release_urls[0]):
+                    print("You supplied a url list, ignoring your configuration's media types.")
+                    with open(args.release_urls[0]) as f:
+                        candidates = [(int(query['id']), int(query['torrentid'])) for query in\
+                                [dict(parse_qsl(urlparse(url).query)) for url in f]]
+                else:
+                    print("You supplied one or more release URLs, ignoring your configuration's media types.")
+                    candidates = [(int(query['id']), int(query['torrentid'])) for query in\
+                            [dict(parse_qsl(urlparse(url).query)) for url in args.release_urls]]
+            else:
+                if args.mode is None:
+                    if mode == 'none':
+                        print("No urls provided and scraping is disabled")
+                    else:
+                        candidates = api.get_candidates(mode, skip=seen, media=supported_media)
+                elif args.mode == 'none':
+                    print("No urls provided and scraping is disabled")
+                else:
+                    candidates = api.get_candidates(args.mode, skip=seen, media=supported_media)
+
+            # Process each candidate
+            for groupid, torrentid in candidates:
+                try:
                     group = api.request('torrentgroup', id=groupid)
                     torrent = [t for t in group['torrents'] if t['id'] == torrentid][0]
-            except Exception as e:
-                print("Error: can't edit 24-bit torrent - skipping: {0}".format(e))
-                continue
+                    
+                    release = "Release found: {0} ({1})".format(whatapi.unescape(group['group']['name']), group['group']['year'])
+                    releaseurl = "Release URL: {0}".format(api.release_url(group, torrent))
 
-        if transcode.is_multichannel(flac_dir):
-            print("This is a multichannel release, which is unsupported - skipping")
-            continue
+                    print("")
+                    print(release)
+                    print(releaseurl)
 
-        needed = formats_needed(group, torrent, supported_formats)
-        print("Formats needed: {0}".format(', '.join(needed)))
+                    if not torrent['filePath']:
+                        for d in data_dir:
+                            flac_file = os.path.join(d, whatapi.unescape(torrent['fileList']).split('{{{')[0])
+                            if not os.path.exists(flac_file):
+                                continue
+                            flac_dir = os.path.join(d, "{0} ({1}) [FLAC]".format(
+                                whatapi.unescape(group['group']['name']), group['group']['year']))
+                            if not os.path.exists(flac_dir):
+                                os.makedirs(flac_dir)
+                            shutil.copy(flac_file, flac_dir)
+                            break
 
-        if needed:
-            # Before proceeding, do the basic tag checks on the source
-            # files to ensure any uploads won't be reported, but punt
-            # on the tracknumber formatting; problems with tracknumber
-            # may be fixable when the tags are copied.
-            broken_tags = False
-            for flac_file in transcode.locate(flac_dir, transcode.ext_matcher('.flac')):
-                (ok, msg) = tagging.check_tags(flac_file, check_tracknumber_format=False)
-                if not ok:
-                    print("A FLAC file in this release has unacceptable tags - skipping: {0}".format(msg))
-                    print("You might be able to trump it.")
-                    broken_tags = True
-                    break
-            if broken_tags:
-                continue
+                        if not os.path.exists(flac_file):
+                            print("Path not found - skipping: {0}".format(flac_file))
+                            continue
+                    else:
+                        for d in data_dir:
+                            flac_dir = os.path.join(d, whatapi.unescape(torrent['filePath']))
+                            if os.path.exists(flac_dir):
+                                break
 
-        for format in needed:
-            if os.path.exists(flac_dir):
-                print("Adding format {0}...".format(format), end=" ")
-                tmpdir = tempfile.mkdtemp()
-                try:
-                    local_output_dir = config.get('orpheus', 'output_dir_{}'.format(format))
-                except:
-                    local_output_dir = output_dir
+                    if int(do_24_bit):
+                        try:
+                            if transcode.is_24bit(flac_dir) and torrent['encoding'] != '24bit Lossless':
+                                # A lot of people are uploading FLACs from Bandcamp without realizing
+                                # that they're actually 24 bit files (usually 24/44.1). Since we know for
+                                # sure whether the files are 24 bit, we might as well correct the listing
+                                # on the site (and get an extra upload in the process).
+                                if args.no_24bit_edit:
+                                    print("Release is actually 24-bit lossless, skipping.")
+                                    continue
+                                if int(do_24_bit) == 1:  
+                                    confirmation = input("Mark release as 24bit lossless? y/n: ")
+                                    if confirmation != 'y':
+                                        continue
+                                print("Marking release as 24bit lossless.")
+                                api.set_24bit(torrent)
+                                group = api.request('torrentgroup', id=groupid)
+                                torrent = [t for t in group['torrents'] if t['id'] == torrentid][0]
+                        except Exception as e:
+                            print("Error: can't edit 24-bit torrent - skipping: {0}".format(e))
+                            continue
 
-                try:
-                    local_torrent_dir = config.get('orpheus', 'torrent_dir_{}'.format(format))
-                except:
-                    local_torrent_dir = torrent_dir
+                    if transcode.is_multichannel(flac_dir):
+                        print("This is a multichannel release, which is unsupported - skipping")
+                        continue
 
-                try:
-                    transcode_dir = transcode.transcode_release(flac_dir, local_output_dir, format, max_threads=args.threads)
-                    new_torrent = transcode.make_torrent(transcode_dir, tmpdir, tracker, api.passkey, source)
-                    if upload_torrent:
-                        permalink = api.permalink(torrent)
-                        description = create_description(torrent, flac_dir, format, permalink)
-                        api.upload(group, torrent, new_torrent, format, description)
-                    shutil.copy(new_torrent, local_torrent_dir)
-                    print("done!")
-                    if args.single: break
+                    needed = formats_needed(group, torrent, supported_formats)
+                    print("Formats needed: {0}".format(', '.join(needed)))
+
+                    if needed:
+                        # Before proceeding, do the basic tag checks on the source
+                        # files to ensure any uploads won't be reported, but punt
+                        # on the tracknumber formatting; problems with tracknumber
+                        # may be fixable when the tags are copied.
+                        broken_tags = False
+                        for flac_file in transcode.locate(flac_dir, transcode.ext_matcher('.flac')):
+                            (ok, msg) = tagging.check_tags(flac_file, check_tracknumber_format=False)
+                            if not ok:
+                                print("A FLAC file in this release has unacceptable tags - skipping: {0}".format(msg))
+                                print("You might be able to trump it.")
+                                broken_tags = True
+                                break
+                        if broken_tags:
+                            continue
+
+                    for format in needed:
+                        if os.path.exists(flac_dir):
+                            print("Adding format {0}...".format(format), end=" ")
+                            tmpdir = tempfile.mkdtemp()
+                            try:
+                                local_output_dir = config.get('orpheus', 'output_dir_{}'.format(format))
+                            except:
+                                local_output_dir = output_dir
+
+                            try:
+                                local_torrent_dir = config.get('orpheus', 'torrent_dir_{}'.format(format))
+                            except:
+                                local_torrent_dir = torrent_dir
+
+                            try:
+                                # make folder format configurable
+                                transcode_dir = transcode.transcode_release(flac_dir, local_output_dir, format,
+                                                                            max_threads=args.threads,
+                                                                            folder_format=folder_format, group=group,
+                                                                            torrent=torrent)
+                                new_torrent = transcode.make_torrent(transcode_dir, tmpdir, tracker, api.passkey, source)
+                                if upload_torrent:
+                                    permalink = api.permalink(torrent)
+                                    description = create_description(torrent, flac_dir, format, permalink)
+                                    api.upload(group, torrent, new_torrent, format, description)
+                                shutil.copy(new_torrent, local_torrent_dir)
+                                print("done!")
+                                if args.single: break
+                            except Exception as e:
+                                print("Error adding format {0}: {1}".format(format, e))
+                                traceback.print_exc()
+                            finally:
+                                shutil.rmtree(tmpdir)
+                        else:
+                            print("Path not found - skipping: {0}".format(flac_dir))
+                            break
+
+                    seen.add(str(torrentid))
+                    pickle.dump(seen, open(args.cache, 'wb'))
                 except Exception as e:
-                    print("Error adding format {0}: {1}".format(format, e))
+                    print(f"Error processing torrent {torrentid}: {str(e)}")
                     traceback.print_exc()
-                finally:
-                    shutil.rmtree(tmpdir)
-            else:
-                print("Path not found - skipping: {0}".format(flac_dir))
+                    continue
+                    
+        except Exception as e:
+            print(f"Error occurred: {str(e)}")
+            traceback.print_exc()
+            if not args.daemon:
+                raise
+    
+    if args.daemon:
+        print(f"Running in daemon mode, check interval: {args.interval} seconds")
+        while True:
+            try:
+                current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                print(f"\n[{current_time}] Starting new check cycle...")
+                
+                process_candidates()
+                
+                print(f"[{current_time}] Check cycle completed, waiting for next cycle...")
+                time.sleep(args.interval)
+                
+            except KeyboardInterrupt:
+                print("\nReceived termination signal, exiting...")
                 break
-
-        seen.add(str(torrentid))
-        pickle.dump(seen, open(args.cache, 'wb'))
+            except Exception as e:
+                print(f"Error occurred: {str(e)}")
+                print("Waiting for next retry cycle...")
+                time.sleep(args.interval)
+    else:
+        # Single execution mode
+        process_candidates()
 
 if __name__ == "__main__":
     main()

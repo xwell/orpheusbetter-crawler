@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import errno
+import html
 import multiprocessing
 import os
 import pipes
@@ -9,6 +10,7 @@ import shutil
 import signal
 import subprocess
 import sys
+from pathvalidate import sanitize_filename
 
 import mutagen.flac
 
@@ -226,7 +228,22 @@ def transcode(flac_file, output_dir, output_format):
 
     return transcode_file
 
-def get_transcode_dir(flac_dir, output_dir, output_format, resample):
+def get_transcode_dir(flac_dir, output_dir, output_format, resample, folder_format=None, group=None, torrent=None):
+    """
+    Returns the directory to which the transcoded files should be placed.
+    :param flac_dir: the directory containing the FLAC files to transcode
+    :param output_dir: root directory for transcoded files
+    :param output_format: desired output format (e.g. 'FLAC', '320', 'V0', 'V2')
+    :param resample: Whether the FLAC file needs to be resampled.
+    :param folder_format: the format of the transcoded output directory
+    :param group: the metadata of torrent group to be transcoded
+    :param torrent: the metadata of torrent to be transcoded
+    """
+    # format the output directory name based on the folder_format parameter
+    if folder_format and group and torrent:
+        transcode_dir = generate_folder_name(group, torrent, output_format, folder_format)
+        if transcode_dir:
+            return os.path.join(output_dir, transcode_dir)
     full_flac_dir = flac_dir
     transcode_dir = os.path.basename(flac_dir)
     flac_dir = transcode_dir
@@ -340,10 +357,17 @@ def get_transcode_dir(flac_dir, output_dir, output_format, resample):
     #transcode_dir = input(f"Transcode directory? [ {transcode_dir} ] : ").strip() or transcode_dir
     return os.path.join(output_dir, transcode_dir)
 
-def transcode_release(flac_dir, output_dir, output_format, max_threads=None):
-    '''
+def transcode_release(flac_dir, output_dir, output_format, max_threads=None, folder_format=None, group=None, torrent=None):
+    """
     Transcode a FLAC release into another format.
-    '''
+    :param flac_dir: the directory containing the FLAC files to transcode
+    :param output_dir: root directory for transcoded files
+    :param output_format: the output format of the transcoded FLAC files
+    :param max_threads: the maximum number of threads to use for transcoding
+    :param folder_format: the format of the transcoded output directory
+    :param group: the metadata of torrent group to be transcoded
+    :param torrent: the metadata of torrent to be transcoded
+    """
     flac_dir = os.path.abspath(flac_dir)
     output_dir = os.path.abspath(output_dir)
     flac_files = locate(flac_dir, ext_matcher('.flac'))
@@ -365,7 +389,7 @@ def transcode_release(flac_dir, output_dir, output_format, max_threads=None):
     # transcode_dir is a new directory created exclusively for this
     # transcode. Do not change this assumption without considering the
     # consequences!
-    transcode_dir = get_transcode_dir(flac_dir, output_dir, output_format, resample)
+    transcode_dir = get_transcode_dir(flac_dir, output_dir, output_format, resample, folder_format, group, torrent)
     print(transcode_dir)
     if not os.path.exists(transcode_dir):
         os.makedirs(transcode_dir)
@@ -442,6 +466,96 @@ def make_torrent(input_dir, output_dir, tracker, passkey, source):
         command = ["mktorrent", "-p", "-s", source, "-a", tracker_url, "-o", torrent, input_dir]
     subprocess.check_output(command, stderr=subprocess.STDOUT)
     return torrent
+
+
+def clean_filename(filename: str) -> str:
+    """
+    Clean up redundant special characters, spaces, and separators in filenames
+    :param filename:
+    :return:
+    """
+    # Clean up redundant spaces, separators, and brackets
+
+    # Merge multiple separators (supports spaces, commas, periods, Chinese commas, colons, semicolons, vertical bars, slashes, backslashes, underscores. Does not support the - symbol) into one
+    filename = re.sub(r'(?:\s*([,\.\:\;\|/\\_])\s*){2,}', r'\1 ', filename)
+
+    # Define all paired bracket patterns
+    patterns = [
+        # Handle paired brackets containing only special characters
+        (r'\(\s*\W*\s*\)', ''),  # (...)
+        (r'\[\s*\W*\s*\]', ''),  # [...]
+        (r'\{\s*\W*\s*\}', ''),  # {...}
+        (r'<\s*\W*\s*>', ''),  # <...>
+        (r'《\s*\W*\s*》', ''),  # 《...》
+        (r'〈\s*\W*\s*〉', ''),  # 〈...〉
+        (r'「\s*\W*\s*」', ''),  # 「...」
+        (r'『\s*\W*\s*』', ''),  # 『...』
+        (r'（\s*\W*\s*）', ''),  # （...）
+        (r'［\s*\W*\s*］', ''),  # ［...］
+        (r'【\s*\W*\s*】', ''),  # 【...】
+
+        # Handle edge cases - remove all special characters and spaces at boundaries
+        # If a left bracket is followed by a separator, or a separator is followed by a right bracket, remove them
+        (r'(?<=[\(\[\{<《〈「『（［【])(\s*[,\.\:\;\|/\\_]\s*)\b', ''),
+        (r'\b(\s*[,\.\:\;\|/\\_]\s*)(?=[】］）』」〉》>\}\]\)])', ''),
+    ]
+
+    # Apply each pattern sequentially
+    for pattern, replacement in patterns:
+        filename = re.sub(pattern, replacement, filename)
+
+    # Merge multiple spaces
+    filename = re.sub(r'\s+', ' ', filename)
+    return filename.strip().strip(".").strip()
+
+
+def safe_get(data, *keys, unescape=True, default=""):
+    """
+    Securely fetch values from nested dict/list and decode html
+    """
+    value = data
+    for key in keys:
+        if isinstance(value, dict):
+            value = value.get(key, default)
+        elif isinstance(value, (list, tuple)) and isinstance(key, int) and 0 <= key < len(value):
+            value = value[key]
+        else:
+            return default
+    return html.unescape(str(value)) if unescape else str(value)
+
+
+def _get_folder_attr(group, torrent, output_format):
+    """
+    Get the folder attributes for the transcoded release folder format.
+    """
+    group_metadata = group.get("group", {})
+    album_title = safe_get(group_metadata, "name")
+    remaster_title = safe_get(torrent, "remasterTitle")
+    full_album_title = f"{album_title} ({remaster_title})" if remaster_title else album_title
+
+    # label1 - label2 => label1 ∕ label2
+    return {
+        "ARTISTNAME": safe_get(group_metadata, "musicInfo", "artists", 0, "name"),
+        "ALBUMTITLE": full_album_title,
+        "YEAR": safe_get(torrent, "remasterYear"),
+        "LABEL": re.sub(r'\s*[\;\/]\s*|\s+\-\s+', ' ∕ ', safe_get(torrent, "remasterRecordLabel")).strip(),
+        "CATALOGUENUMBER": safe_get(torrent, "remasterCatalogueNumber"),
+        "FORMAT": output_format,
+        "RELEASETYPE": safe_get(group_metadata, "releaseTypeName").upper(),
+        "MEDIATYPE": safe_get(torrent, "media")
+    }
+
+
+def generate_folder_name(group, torrent, output_format, folder_format):
+    """
+    Get the folder name for the transcoded release folder format.
+    """
+    folder_attrs = _get_folder_attr(group, torrent, output_format)
+    filename = folder_format
+    for key, value in folder_attrs.items():
+        filename = filename.replace(f'%{key}%', value)
+    return sanitize_filename(clean_filename(filename), replacement_text='_')
+
 
 def main():
     import argparse
