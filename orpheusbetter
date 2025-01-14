@@ -77,9 +77,9 @@ def main():
     parser.add_argument('-ff', '--folder-format', metavar="PATTERN",
                         help="""
                         pattern for formatting folder names.
-                        e.g. '%ARTISTNAME% - %ALBUMTITLE% (%YEAR%) {%LABEL%, %CATALOGUENUMBER%} [%MEDIATYPE% %FORMAT%]'
-                        available variables: %ARTISTNAME%, %ALBUMTITLE%, %YEAR%, %LABEL%, %CATALOGUENUMBER%, %FORMAT%, %RELEASETYPE%, %MEDIATYPE%
-                        note: %ALBUMTITLE% will contain the remaster title(aka. version title) if it exists, otherwise the original title.
+                        e.g. '%%ARTISTNAME%% - %%ALBUMTITLE%% (%%YEAR%%) {%%LABEL%%, %%CATALOGUENUMBER%%} [%%MEDIATYPE%% %%FORMAT%%]'
+                        available variables: %%ARTISTNAME%%, %%ALBUMTITLE%%, %%YEAR%%, %%LABEL%%, %%CATALOGUENUMBER%%, %%FORMAT%%, %%RELEASETYPE%%, %%MEDIATYPE%%
+                        note: %%ALBUMTITLE%% will contain the remaster title(aka. version title) if it exists, otherwise the original title.
                         """)
     parser.add_argument('--daemon', action='store_true', help='Run in daemon mode for continuous monitoring')
     parser.add_argument('--interval', type=int, default=3600, 
