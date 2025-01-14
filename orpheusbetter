@@ -188,6 +188,7 @@ def main():
             default_folder_format = '%ARTISTNAME% - %ALBUMTITLE% (%YEAR%) {%LABEL%, %CATALOGUENUMBER%} [%MEDIATYPE% %FORMAT%]'
             config.set('orpheus', 'folder_format', default_folder_format)
             config.write(open(args.config, 'w'))
+            folder_format = default_folder_format
             print("Added new config option: folder_format")
 
     folder_format = args.folder_format or folder_format
